@@ -9,106 +9,11 @@ from .api_client import ConsumerNotebookLMClient, extract_cookies_from_chrome_ex
 # Initialize MCP server
 mcp = FastMCP(
     name="notebooklm-consumer",
-    instructions="""NotebookLM Consumer MCP Server.
+    instructions="""NotebookLM Consumer MCP - Access Consumer NotebookLM (notebooklm.google.com), NOT Enterprise.
 
-**IMPORTANT: This is for Consumer NotebookLM (notebooklm.google.com), NOT Enterprise.**
-
-Consumer NotebookLM is the free/personal tier at notebooklm.google.com.
-Enterprise NotebookLM is at vertexaisearch.cloud.google.com (different system, different notebooks).
-
-This MCP uses reverse-engineered internal APIs and requires browser cookie authentication.
-
-## Authentication (SIMPLIFIED!)
-
-You only need to extract COOKIES - the CSRF token and session ID are now auto-extracted!
-
-Using Chrome DevTools MCP:
-1. Navigate to notebooklm.google.com
-2. Get cookies from any network request: get_network_request(reqid=<any_request>)
-3. Call save_auth_tokens(cookies=<cookie_header>)
-
-That's it! Cookies are stable for weeks. The CSRF token and session ID are automatically
-extracted from the page when needed.
-
-## Available Tools
-
-- notebook_list: List all notebooks
-- notebook_create: Create a new notebook
-- notebook_get: Get notebook details with sources
-- notebook_describe: Get AI-generated summary of what a notebook is about
-- source_describe: Get AI-generated summary and keyword chips for a specific source
-- notebook_rename: Rename a notebook
-- chat_configure: Configure chat goal/style and response length
-- notebook_delete: Delete a notebook (REQUIRES user confirmation)
-- notebook_add_url: Add URL/YouTube as source
-- notebook_add_text: Add pasted text as source
-- notebook_add_drive: Add Google Drive document as source
-- notebook_query: Ask questions about notebook sources
-- source_list_drive: List all sources with types and check Drive freshness
-- source_sync_drive: Sync stale Drive sources (REQUIRES user confirmation)
-- research_start: Start Web or Drive research to discover sources
-- research_status: Check research progress and get results
-- research_import: Import discovered sources into notebook
-- audio_overview_create: Generate audio overviews (podcasts) from sources
-- video_overview_create: Generate video overviews from sources
-- studio_status: Check audio/video generation status
-- studio_delete: Delete audio/video overviews (REQUIRES user confirmation)
-- save_auth_tokens: Save cookies for authentication
-
-## Research Feature
-
-To discover and import sources automatically:
-1. Call research_start(query, source, mode) - starts research
-   - source: "web" or "drive"
-   - mode: "fast" (~10 sources, 30s) or "deep" (~40 sources, 3-5min, web only)
-2. Call research_status(notebook_id) - poll until status="completed"
-3. Call research_import(notebook_id, task_id) - import all or selected sources
-
-## Syncing Drive Sources
-
-To sync outdated Google Drive sources:
-1. Call source_list_drive(notebook_id) to see all sources and their freshness
-2. Show the user which Drive sources are stale (needs_sync=True)
-3. Ask the user to confirm which sources to sync
-4. Call source_sync_drive(source_ids, confirm=True) with the confirmed source IDs
-
-## Chat Configuration
-
-To customize how the AI responds to queries:
-- chat_configure(notebook_id, goal, custom_prompt, response_length)
-
-Goals: "default" (research/brainstorming), "learning_guide" (educational), "custom" (with custom_prompt)
-Response lengths: "default", "longer", "shorter"
-
-Example: chat_configure(notebook_id, goal="custom", custom_prompt="Respond as a PhD researcher", response_length="longer")
-
-## Studio Features (Audio/Video Overviews)
-
-To generate audio or video overviews:
-1. Call audio_overview_create or video_overview_create with notebook_id and options (confirm=False)
-2. Show the user the proposed settings and ask for confirmation
-3. Call again with confirm=True to start generation
-4. Generation takes several minutes - the tool returns immediately with artifact_id
-5. Call studio_status(notebook_id) to check progress and get URLs when complete
-
-Audio formats: deep_dive, brief, critique, debate
-Audio lengths: short, default, long
-Video formats: explainer, brief
-Video styles: auto_select, classic, whiteboard, kawaii, anime, watercolor, retro_print, heritage, paper_craft
-
-## IMPORTANT: Confirmation Required Operations
-
-For audio_overview_create, video_overview_create, notebook_delete, studio_delete, and source_sync_drive, you MUST:
-1. Warn the user about the operation
-2. Ask the user explicitly to confirm before proceeding
-3. Only set confirm=True after the user approves
-
-## Known Limitations
-
-- Cookies expire after several weeks - re-extract when API calls fail with auth errors
-- API is undocumented and may change without notice
-- Rate limits apply (~50 queries/day on free tier)
-""",
+**Auth:** Use save_auth_tokens with cookies from Chrome DevTools. CSRF/session auto-extracted.
+**Confirmation:** Tools with confirm param require user approval before setting confirm=True.
+**Studio:** After creating audio/video/infographic/slides, poll studio_status for completion.""",
 )
 
 # Global state
@@ -161,9 +66,6 @@ def notebook_list(max_results: int = 100) -> dict[str, Any]:
 
     Args:
         max_results: Maximum number of notebooks to return (default: 100)
-
-    Returns:
-        Dictionary with status and list of notebooks
     """
     try:
         client = get_client()
@@ -206,9 +108,6 @@ def notebook_create(title: str = "") -> dict[str, Any]:
 
     Args:
         title: Optional title for the notebook
-
-    Returns:
-        Dictionary with status and notebook details
     """
     try:
         client = get_client()
@@ -230,13 +129,10 @@ def notebook_create(title: str = "") -> dict[str, Any]:
 
 @mcp.tool()
 def notebook_get(notebook_id: str) -> dict[str, Any]:
-    """Get details of a notebook.
+    """Get notebook details with sources.
 
     Args:
-        notebook_id: The notebook UUID
-
-    Returns:
-        Dictionary with status and notebook details including timestamps
+        notebook_id: Notebook UUID
     """
     try:
         client = get_client()
@@ -267,21 +163,12 @@ def notebook_get(notebook_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def notebook_describe(notebook_id: str) -> dict[str, Any]:
-    """Get an AI-generated summary of what a notebook is about.
-
-    This returns NotebookLM's auto-generated description that appears in the Chat panel,
-    along with suggested report topics based on the notebook's sources.
+    """Get AI-generated notebook summary with suggested topics.
 
     Args:
-        notebook_id: The notebook UUID
+        notebook_id: Notebook UUID
 
-    Returns:
-        Dictionary with:
-        - status: "success" or "error"
-        - summary: AI-generated markdown summary with key themes highlighted
-        - suggested_topics: List of suggested report topics, each with:
-            - question: The topic as a question
-            - prompt: Full prompt for generating a report on this topic
+    Returns: summary (markdown), suggested_topics list
     """
     try:
         client = get_client()
@@ -297,19 +184,12 @@ def notebook_describe(notebook_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def source_describe(source_id: str) -> dict[str, Any]:
-    """Get an AI-generated summary and keyword chips for a specific source.
-
-    This is the "Source Guide" feature shown when clicking on a source in NotebookLM.
-    Provides a concise AI summary with bold keywords and topic chips.
+    """Get AI-generated source summary with keyword chips.
 
     Args:
-        source_id: The source UUID
+        source_id: Source UUID
 
-    Returns:
-        Dictionary with:
-        - status: "success" or "error"
-        - summary: AI-generated markdown summary with **bold** keywords
-        - keywords: List of keyword chip strings (topics)
+    Returns: summary (markdown with **bold** keywords), keywords list
     """
     try:
         client = get_client()
@@ -325,14 +205,11 @@ def source_describe(source_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def notebook_add_url(notebook_id: str, url: str) -> dict[str, Any]:
-    """Add a URL (website or YouTube) as a source to a notebook.
+    """Add URL (website or YouTube) as source.
 
     Args:
-        notebook_id: The notebook UUID
-        url: The URL to add
-
-    Returns:
-        Dictionary with status and source details
+        notebook_id: Notebook UUID
+        url: URL to add
     """
     try:
         client = get_client()
@@ -354,15 +231,12 @@ def notebook_add_text(
     text: str,
     title: str = "Pasted Text",
 ) -> dict[str, Any]:
-    """Add pasted text as a source to a notebook.
+    """Add pasted text as source.
 
     Args:
-        notebook_id: The notebook UUID
-        text: The text content to add
-        title: Optional title for the source
-
-    Returns:
-        Dictionary with status and source details
+        notebook_id: Notebook UUID
+        text: Text content to add
+        title: Optional title
     """
     try:
         client = get_client()
@@ -385,16 +259,13 @@ def notebook_add_drive(
     title: str,
     doc_type: str = "doc",
 ) -> dict[str, Any]:
-    """Add a Google Drive document as a source to a notebook.
+    """Add Google Drive document as source.
 
     Args:
-        notebook_id: The notebook UUID
-        document_id: The Google Drive document ID (from the URL)
-        title: The document title to display
-        doc_type: Type of document - "doc", "slides", "sheets", or "pdf"
-
-    Returns:
-        Dictionary with status and source details
+        notebook_id: Notebook UUID
+        document_id: Drive document ID (from URL)
+        title: Display title
+        doc_type: doc|slides|sheets|pdf
     """
     try:
         mime_types = {
@@ -437,16 +308,13 @@ def notebook_query(
     source_ids: list[str] | None = None,
     conversation_id: str | None = None,
 ) -> dict[str, Any]:
-    """Ask a question about the notebook sources.
+    """Ask a question about notebook sources.
 
     Args:
-        notebook_id: The notebook UUID
-        query: The question to ask
-        source_ids: Optional list of source IDs to query (default: all sources)
-        conversation_id: Optional conversation ID for follow-up questions
-
-    Returns:
-        Dictionary with answer, citations, and conversation_id for follow-ups
+        notebook_id: Notebook UUID
+        query: Question to ask
+        source_ids: Source IDs to query (default: all)
+        conversation_id: For follow-up questions
     """
     try:
         client = get_client()
@@ -473,20 +341,11 @@ def notebook_delete(
     notebook_id: str,
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Delete a notebook permanently.
-
-    WARNING: This action is IRREVERSIBLE. The notebook and all its sources,
-    notes, and generated content will be permanently deleted.
-
-    IMPORTANT: You MUST ask the user for confirmation before calling this tool.
-    The confirm parameter must be explicitly set to True.
+    """Delete notebook permanently. IRREVERSIBLE. Requires confirm=True.
 
     Args:
-        notebook_id: The notebook UUID to delete
-        confirm: Must be True to proceed. Set to False by default as a safety measure.
-
-    Returns:
-        Dictionary with status
+        notebook_id: Notebook UUID
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -519,11 +378,8 @@ def notebook_rename(
     """Rename a notebook.
 
     Args:
-        notebook_id: The notebook UUID
-        new_title: The new title for the notebook
-
-    Returns:
-        Dictionary with status and updated notebook info
+        notebook_id: Notebook UUID
+        new_title: New title
     """
     try:
         client = get_client()
@@ -549,26 +405,13 @@ def chat_configure(
     custom_prompt: str | None = None,
     response_length: str = "default",
 ) -> dict[str, Any]:
-    """Configure the chat settings for a notebook.
-
-    This sets the conversational goal/style and response length for the notebook's
-    AI chat. These settings affect how the AI responds to queries.
+    """Configure notebook chat settings.
 
     Args:
-        notebook_id: The notebook UUID
-        goal: The conversational goal/style. One of:
-            - "default": General purpose research and brainstorming
-            - "learning_guide": Educational focus, helps grasp new concepts
-            - "custom": Use a custom prompt (requires custom_prompt)
-        custom_prompt: Custom prompt text when goal="custom" (up to 10000 chars).
-            Examples: "respond at a PhD student level", "pretend to be a game host"
-        response_length: Response length preference. One of:
-            - "default": Balanced response length
-            - "longer": Verbose, more detailed responses
-            - "shorter": Concise, brief responses
-
-    Returns:
-        Dictionary with status and updated settings
+        notebook_id: Notebook UUID
+        goal: default|learning_guide|custom
+        custom_prompt: Required when goal=custom (max 10000 chars)
+        response_length: default|longer|shorter
     """
     try:
         client = get_client()
@@ -587,19 +430,12 @@ def chat_configure(
 
 @mcp.tool()
 def source_list_drive(notebook_id: str) -> dict[str, Any]:
-    """List all sources in a notebook with their types and freshness status.
+    """List sources with types and Drive freshness status.
 
-    This tool identifies which sources can be synced with Google Drive:
-    - Type 2 (drive): User-added Google Drive documents
-    - Type 1 (gemini_notes): Gemini-generated meeting notes (also stored in Drive)
-
-    Use this before source_sync_drive to see which sources are stale.
+    Use before source_sync_drive to identify stale sources.
 
     Args:
-        notebook_id: The notebook UUID
-
-    Returns:
-        Dictionary with sources grouped by syncability and freshness status
+        notebook_id: Notebook UUID
     """
     try:
         client = get_client()
@@ -646,20 +482,13 @@ def source_sync_drive(
     source_ids: list[str],
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Sync specified Google Drive sources with their latest content.
+    """Sync Drive sources with latest content. Requires confirm=True.
 
-    IMPORTANT: Before calling this tool, you MUST:
-    1. Call source_list_drive to identify stale sources
-    2. Show the user which sources will be synced
-    3. Ask the user to confirm they want to sync
-    4. Only set confirm=True after user approval
+    Call source_list_drive first to identify stale sources.
 
     Args:
-        source_ids: List of source UUIDs to sync (get these from source_list_drive)
-        confirm: Must be True to proceed. Set to False by default as a safety measure.
-
-    Returns:
-        Dictionary with sync results for each source
+        source_ids: Source UUIDs to sync
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -728,22 +557,14 @@ def research_start(
     notebook_id: str | None = None,
     title: str | None = None,
 ) -> dict[str, Any]:
-    """Start a research session to discover sources.
-
-    This tool searches the web or your Google Drive for relevant sources
-    based on a query. Use research_status to check progress and get results.
+    """Start research to discover sources. Use research_status to poll.
 
     Args:
-        query: The search query (e.g., "kubernetes best practices 2025")
-        source: Where to search - "web" (public internet) or "drive" (your Google Drive)
-        mode: Research depth - "fast" (~10 sources, 30 seconds) or "deep" (~40 sources, 3-5 minutes)
-              Note: "deep" mode only works with source="web"
-        notebook_id: Optional existing notebook ID. If not provided, a new notebook is created.
-        title: Optional title for new notebook. Used only if notebook_id is not provided.
-               If neither notebook_id nor title is provided, notebook is titled "Research: <query>"
-
-    Returns:
-        Dictionary with task_id, notebook_id, and research info
+        query: Search query
+        source: web|drive
+        mode: fast (~10 sources, 30s) | deep (~40 sources, web only)
+        notebook_id: Existing notebook (creates new if not provided)
+        title: Title for new notebook
     """
     try:
         client = get_client()
@@ -813,22 +634,12 @@ def research_status(
     poll_interval: int = 30,
     max_wait: int = 300,
 ) -> dict[str, Any]:
-    """Check research progress and get results.
-
-    Call this after research_start to check if research is complete
-    and to get the list of discovered sources.
-
-    This tool has built-in polling with sleep to reduce API token usage.
-    By default, it will poll every 30 seconds for up to 5 minutes.
+    """Poll research progress. Blocks until complete or timeout.
 
     Args:
-        notebook_id: The notebook UUID (from research_start response)
-        poll_interval: Seconds to wait between polls (default: 30)
-        max_wait: Maximum seconds to wait for completion (default: 300 = 5 minutes).
-                  Set to 0 for a single immediate poll without waiting.
-
-    Returns:
-        Dictionary with status, sources list, and summary when complete
+        notebook_id: Notebook UUID
+        poll_interval: Seconds between polls (default: 30)
+        max_wait: Max seconds to wait (default: 300, 0=single poll)
     """
     import time
 
@@ -880,19 +691,14 @@ def research_import(
     task_id: str,
     source_indices: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Import discovered sources into the notebook.
+    """Import discovered sources into notebook.
 
-    Call this after research_status shows status="completed" to import
-    the discovered sources.
+    Call after research_status shows status="completed".
 
     Args:
-        notebook_id: The notebook UUID
-        task_id: The research task ID (from research_start or research_status)
-        source_indices: Optional list of source indices to import (0-based).
-                       If not provided, imports ALL discovered sources.
-
-    Returns:
-        Dictionary with imported source count and IDs
+        notebook_id: Notebook UUID
+        task_id: Research task ID
+        source_indices: Source indices to import (default: all)
     """
     try:
         client = get_client()
@@ -969,30 +775,16 @@ def audio_overview_create(
     focus_prompt: str = "",
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Generate an audio overview (podcast) from notebook sources.
-
-    Generation takes several minutes. Use studio_status to check progress.
-
-    IMPORTANT: Before calling this tool, you MUST:
-    1. Show the user the settings (format, length, language, focus_prompt)
-    2. Ask the user to confirm they want to proceed
-    3. Only set confirm=True after user approval
+    """Generate audio overview. Requires confirm=True after user approval.
 
     Args:
-        notebook_id: The notebook UUID
-        source_ids: Optional list of source IDs to include (default: all sources)
-        format: Audio format - "deep_dive" (default), "brief", "critique", or "debate"
-            - deep_dive: Lively conversation between two hosts, unpacking topics
-            - brief: Bite-sized overview to grasp core ideas quickly
-            - critique: Expert review offering constructive feedback
-            - debate: Thoughtful debate illuminating different perspectives
-        length: Length - "short", "default", or "long"
-        language: BCP-47 language code (e.g., "en", "es", "fr", "de", "ja")
-        focus_prompt: Optional text describing what AI should focus on
-        confirm: Must be True to proceed. Show settings and get user confirmation first.
-
-    Returns:
-        Dictionary with artifact_id and status. Call studio_status to check progress.
+        notebook_id: Notebook UUID
+        source_ids: Source IDs (default: all)
+        format: deep_dive|brief|critique|debate
+        length: short|default|long
+        language: BCP-47 code (en, es, fr, de, ja)
+        focus_prompt: Optional focus text
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -1086,37 +878,16 @@ def video_overview_create(
     focus_prompt: str = "",
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Generate a video overview from notebook sources.
-
-    Generation takes several minutes. Use studio_status to check progress.
-
-    IMPORTANT: Before calling this tool, you MUST:
-    1. Show the user the settings (format, visual_style, language, focus_prompt)
-    2. Ask the user to confirm they want to proceed
-    3. Only set confirm=True after user approval
+    """Generate video overview. Requires confirm=True after user approval.
 
     Args:
-        notebook_id: The notebook UUID
-        source_ids: Optional list of source IDs to include (default: all sources)
-        format: Video format - "explainer" (default) or "brief"
-            - explainer: Structured, comprehensive overview
-            - brief: Bite-sized overview of core ideas
-        visual_style: Visual style for the video:
-            - auto_select (default): AI chooses best style
-            - classic: Traditional educational style
-            - whiteboard: Hand-drawn whiteboard style
-            - kawaii: Cute, colorful style
-            - anime: Japanese animation style
-            - watercolor: Artistic watercolor style
-            - retro_print: Vintage print style
-            - heritage: Classic historical style
-            - paper_craft: Papercut/origami style
-        language: BCP-47 language code (e.g., "en", "es", "fr", "de", "ja")
-        focus_prompt: Optional text describing what AI should focus on
-        confirm: Must be True to proceed. Show settings and get user confirmation first.
-
-    Returns:
-        Dictionary with artifact_id and status. Call studio_status to check progress.
+        notebook_id: Notebook UUID
+        source_ids: Source IDs (default: all)
+        format: explainer|brief
+        visual_style: auto_select|classic|whiteboard|kawaii|anime|watercolor|retro_print|heritage|paper_craft
+        language: BCP-47 code (en, es, fr, de, ja)
+        focus_prompt: Optional focus text
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -1208,21 +979,10 @@ def video_overview_create(
 
 @mcp.tool()
 def studio_status(notebook_id: str) -> dict[str, Any]:
-    """Check the status of studio content generation.
-
-    Call this after creating any studio content (audio, video, infographic,
-    slide deck) to check if generation is complete and get URLs.
+    """Check studio content generation status and get URLs.
 
     Args:
-        notebook_id: The notebook UUID
-
-    Returns:
-        Dictionary with list of artifacts and their status/URLs.
-        Each artifact includes type-specific URL fields:
-        - audio_url: For audio overviews
-        - video_url: For video overviews
-        - infographic_url: For infographics
-        - slide_deck_url: For slide decks
+        notebook_id: Notebook UUID
     """
     try:
         client = get_client()
@@ -1253,23 +1013,12 @@ def studio_delete(
     artifact_id: str,
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Delete a studio artifact (audio, video, infographic, or slide deck).
-
-    WARNING: This action is IRREVERSIBLE. The artifact will be permanently deleted.
-
-    IMPORTANT: Before calling this tool, you MUST:
-    1. Call studio_status to list available artifacts
-    2. Show the user which artifact will be deleted (title, type)
-    3. Ask the user to confirm they want to delete it
-    4. Only set confirm=True after user approval
+    """Delete studio artifact. IRREVERSIBLE. Requires confirm=True.
 
     Args:
-        notebook_id: The notebook UUID (for reference/validation)
-        artifact_id: The artifact UUID to delete (from studio_status)
-        confirm: Must be True to proceed. Set to False by default as a safety measure.
-
-    Returns:
-        Dictionary with deletion status
+        notebook_id: Notebook UUID
+        artifact_id: Artifact UUID (from studio_status)
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -1305,32 +1054,16 @@ def infographic_create(
     focus_prompt: str = "",
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Generate an infographic from notebook sources.
-
-    Generation takes a few minutes. Use studio_status to check progress.
-
-    IMPORTANT: Before calling this tool, you MUST:
-    1. Show the user the settings (orientation, detail_level, language, focus_prompt)
-    2. Ask the user to confirm they want to proceed
-    3. Only set confirm=True after user approval
+    """Generate infographic. Requires confirm=True after user approval.
 
     Args:
-        notebook_id: The notebook UUID
-        source_ids: Optional list of source IDs to include (default: all sources)
-        orientation: Infographic orientation:
-            - landscape (default): Wide format (16:9)
-            - portrait: Tall format (9:16)
-            - square: Square format (1:1)
-        detail_level: Level of detail:
-            - concise: Minimal text, key points only
-            - standard (default): Balanced detail
-            - detailed: Comprehensive with more information (BETA)
-        language: BCP-47 language code (e.g., "en", "es", "fr", "de", "ja")
-        focus_prompt: Optional text describing what AI should focus on
-        confirm: Must be True to proceed. Show settings and get user confirmation first.
-
-    Returns:
-        Dictionary with artifact_id and status. Call studio_status to check progress.
+        notebook_id: Notebook UUID
+        source_ids: Source IDs (default: all)
+        orientation: landscape|portrait|square
+        detail_level: concise|standard|detailed
+        language: BCP-47 code (en, es, fr, de, ja)
+        focus_prompt: Optional focus text
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -1423,30 +1156,16 @@ def slide_deck_create(
     focus_prompt: str = "",
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Generate a slide deck from notebook sources.
-
-    Generation takes a few minutes. Use studio_status to check progress.
-
-    IMPORTANT: Before calling this tool, you MUST:
-    1. Show the user the settings (format, length, language, focus_prompt)
-    2. Ask the user to confirm they want to proceed
-    3. Only set confirm=True after user approval
+    """Generate slide deck. Requires confirm=True after user approval.
 
     Args:
-        notebook_id: The notebook UUID
-        source_ids: Optional list of source IDs to include (default: all sources)
-        format: Slide deck format:
-            - detailed_deck (default): Comprehensive deck with full text and details
-            - presenter_slides: Clean visual slides with key talking points
-        length: Deck length:
-            - short: Fewer slides, key points only
-            - default: Standard length
-        language: BCP-47 language code (e.g., "en", "es", "fr", "de", "ja")
-        focus_prompt: Optional text describing what AI should focus on
-        confirm: Must be True to proceed. Show settings and get user confirmation first.
-
-    Returns:
-        Dictionary with artifact_id and status. Call studio_status to check progress.
+        notebook_id: Notebook UUID
+        source_ids: Source IDs (default: all)
+        format: detailed_deck|presenter_slides
+        length: short|default
+        language: BCP-47 code (en, es, fr, de, ja)
+        focus_prompt: Optional focus text
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -1536,29 +1255,15 @@ def report_create(
     language: str = "en",
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Generate a report from notebook sources.
-
-    Generation takes a few minutes. Use studio_status to check progress.
-
-    IMPORTANT: Before calling this tool, you MUST:
-    1. Show the user the settings (report_format, language, custom_prompt)
-    2. Ask the user to confirm they want to proceed
-    3. Only set confirm=True after user approval
+    """Generate report. Requires confirm=True after user approval.
 
     Args:
-        notebook_id: The notebook UUID
-        source_ids: Optional list of source IDs to include (default: all sources)
-        report_format: Report format - one of:
-            - "Briefing Doc": Key insights and important quotes (default)
-            - "Study Guide": Short-answer quiz, essay questions, glossary
-            - "Blog Post": Insightful takeaways in readable article format
-            - "Create Your Own": Custom format with user-defined prompt
-        custom_prompt: Custom prompt when report_format="Create Your Own"
-        language: BCP-47 language code (e.g., "en", "es", "fr", "de", "ja")
-        confirm: Must be True to proceed. Show settings and get user confirmation first.
-
-    Returns:
-        Dictionary with artifact_id and status. Call studio_status to check progress.
+        notebook_id: Notebook UUID
+        source_ids: Source IDs (default: all)
+        report_format: "Briefing Doc"|"Study Guide"|"Blog Post"|"Create Your Own"
+        custom_prompt: Required for "Create Your Own"
+        language: BCP-47 code (en, es, fr, de, ja)
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -1613,23 +1318,13 @@ def flashcards_create(
     difficulty: str = "medium",
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Generate flashcards from notebook sources.
-
-    Generation takes a few minutes. Use studio_status to check progress.
-
-    IMPORTANT: Before calling this tool, you MUST:
-    1. Show the user the settings (difficulty)
-    2. Ask the user to confirm they want to proceed
-    3. Only set confirm=True after user approval
+    """Generate flashcards. Requires confirm=True after user approval.
 
     Args:
-        notebook_id: The notebook UUID
-        source_ids: Optional list of source IDs to include (default: all sources)
-        difficulty: Difficulty level - "easy", "medium" (default), or "hard"
-        confirm: Must be True to proceed. Show settings and get user confirmation first.
-
-    Returns:
-        Dictionary with artifact_id and status. Call studio_status to check progress.
+        notebook_id: Notebook UUID
+        source_ids: Source IDs (default: all)
+        difficulty: easy|medium|hard
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -1679,24 +1374,13 @@ def mind_map_create(
     title: str = "Mind Map",
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Generate and save a mind map from notebook sources.
-
-    This tool generates a visual mind map from the sources and saves it to the notebook.
-    Mind maps are generated immediately (not async like audio/video).
-
-    IMPORTANT: Before calling this tool, you MUST:
-    1. Show the user the settings (title, sources)
-    2. Ask the user to confirm they want to proceed
-    3. Only set confirm=True after user approval
+    """Generate and save mind map. Requires confirm=True after user approval.
 
     Args:
-        notebook_id: The notebook UUID
-        source_ids: Optional list of source IDs to include (default: all sources)
-        title: Display title for the mind map
-        confirm: Must be True to proceed. Show settings and get user confirmation first.
-
-    Returns:
-        Dictionary with mind_map_id and the generated mind map structure.
+        notebook_id: Notebook UUID
+        source_ids: Source IDs (default: all)
+        title: Display title
+        confirm: Must be True after user approval
     """
     if not confirm:
         return {
@@ -1762,10 +1446,7 @@ def mind_map_list(notebook_id: str) -> dict[str, Any]:
     """List all mind maps in a notebook.
 
     Args:
-        notebook_id: The notebook UUID
-
-    Returns:
-        Dictionary with list of mind maps, each containing id, title, and created_at.
+        notebook_id: Notebook UUID
     """
     try:
         client = get_client()
@@ -1804,29 +1485,23 @@ def save_auth_tokens(
     cookies: str,
     csrf_token: str = "",
     session_id: str = "",
+    request_body: str = "",
+    request_url: str = "",
 ) -> dict[str, Any]:
-    """Save authentication cookies for NotebookLM.
-
-    SIMPLIFIED: You only need to provide cookies! The CSRF token and session ID
-    are now automatically extracted when needed.
-
-    To extract cookies using Chrome DevTools MCP:
-    1. Navigate to notebooklm.google.com
-    2. Get cookies from any network request (get_network_request)
-    3. Call this tool with the cookie header
+    """Save NotebookLM cookies. CSRF and session ID are auto-extracted.
 
     Args:
-        cookies: Full cookie header string from a NotebookLM network request
-        csrf_token: (DEPRECATED - auto-extracted) CSRF token from page source
-        session_id: (DEPRECATED - auto-extracted) Session ID from page source
-
-    Returns:
-        Dictionary with status and cache location
+        cookies: Cookie header from Chrome DevTools get_network_request
+        csrf_token: (deprecated, auto-extracted from request_body or page)
+        session_id: (deprecated, auto-extracted from request_url or page)
+        request_body: Optional request body from get_network_request (contains CSRF token)
+        request_url: Optional request URL from get_network_request (contains session ID)
     """
     global _client
 
     try:
         import time
+        import urllib.parse
         from .auth import AuthTokens, save_tokens_to_cache
 
         # Parse cookie string to dict
@@ -1848,12 +1523,27 @@ def save_auth_tokens(
         # Filter to only essential cookies (reduces noise significantly)
         cookie_dict = {k: v for k, v in all_cookies.items() if k in ESSENTIAL_COOKIES}
 
+        # Try to extract CSRF token from request body if provided
+        if not csrf_token and request_body:
+            # Request body format: f.req=...&at=<csrf_token>&
+            if "at=" in request_body:
+                # Extract and URL-decode the CSRF token
+                at_part = request_body.split("at=")[1].split("&")[0]
+                csrf_token = urllib.parse.unquote(at_part)
+
+        # Try to extract session ID from request URL if provided
+        if not session_id and request_url:
+            # URL format: ...?f.sid=<session_id>&...
+            if "f.sid=" in request_url:
+                sid_part = request_url.split("f.sid=")[1].split("&")[0]
+                session_id = urllib.parse.unquote(sid_part)
+
         # Create and save tokens
-        # Note: csrf_token and session_id are now optional - they'll be auto-extracted
+        # Note: csrf_token and session_id will be auto-extracted from page on first use if still empty
         tokens = AuthTokens(
             cookies=cookie_dict,
-            csrf_token=csrf_token,  # May be empty - will be auto-extracted
-            session_id=session_id,  # May be empty - will be auto-extracted
+            csrf_token=csrf_token,  # May be empty - will be auto-extracted from page
+            session_id=session_id,  # May be empty - will be auto-extracted from page
             extracted_at=time.time(),
         )
         save_tokens_to_cache(tokens)
@@ -1862,12 +1552,23 @@ def save_auth_tokens(
         _client = None
 
         from .auth import get_cache_path
+
+        # Build status message
+        if csrf_token and session_id:
+            token_msg = "CSRF token and session ID extracted from network request - no page fetch needed! ⚡"
+        elif csrf_token:
+            token_msg = "CSRF token extracted from network request. Session ID will be auto-extracted on first use."
+        elif session_id:
+            token_msg = "Session ID extracted from network request. CSRF token will be auto-extracted on first use."
+        else:
+            token_msg = "CSRF token and session ID will be auto-extracted on first API call (~1-2s one-time delay)."
+
         return {
             "status": "success",
-            "message": f"Saved {len(cookie_dict)} essential cookies (filtered from {len(all_cookies)}). "
-                       f"CSRF token and session ID will be auto-extracted when needed.",
+            "message": f"Saved {len(cookie_dict)} essential cookies (filtered from {len(all_cookies)}). {token_msg}",
             "cache_path": str(get_cache_path()),
-            "note": "You no longer need to extract CSRF token or session ID manually!",
+            "extracted_csrf": bool(csrf_token),
+            "extracted_session_id": bool(session_id),
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}

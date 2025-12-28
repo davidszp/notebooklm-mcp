@@ -89,12 +89,18 @@ def load_cached_tokens() -> AuthTokens | None:
         return None
 
 
-def save_tokens_to_cache(tokens: AuthTokens) -> None:
-    """Save tokens to cache."""
+def save_tokens_to_cache(tokens: AuthTokens, silent: bool = False) -> None:
+    """Save tokens to cache.
+
+    Args:
+        tokens: AuthTokens to save
+        silent: If True, don't print confirmation message (for auto-updates)
+    """
     cache_path = get_cache_path()
     with open(cache_path, "w") as f:
         json.dump(tokens.to_dict(), f, indent=2)
-    print(f"Auth tokens cached to {cache_path}")
+    if not silent:
+        print(f"Auth tokens cached to {cache_path}")
 
 
 def extract_tokens_via_chrome_devtools() -> AuthTokens | None:

@@ -42,18 +42,34 @@ uv run pytest tests/test_file.py::test_function -v
 
 ### Method 1: Chrome DevTools MCP (Recommended)
 
+**Option A - Fast (⚡ Recommended):**
+Extract CSRF token and session ID directly from network request - **no page fetch needed!**
+
 ```python
 # 1. Navigate to NotebookLM page
 navigate_page(url="https://notebooklm.google.com/")
 
-# 2. Get cookies from any network request:
-get_network_request(reqid=<any_batchexecute_request>)  # Copy cookie header
+# 2. Get a batchexecute request (any NotebookLM API call)
+get_network_request(reqid=<any_batchexecute_request>)
 
-# 3. Save cookies (CSRF and session ID are auto-extracted!)
+# 3. Save with all three fields from the network request:
+save_auth_tokens(
+    cookies=<cookie_header>,
+    request_body=<request_body>,  # Contains CSRF token
+    request_url=<request_url>      # Contains session ID
+)
+```
+
+**Result:** ⚡ No page fetch! All tokens extracted from network request. First API call will be instant.
+
+**Option B - Minimal (slower first call):**
+Save only cookies, tokens extracted from page on first API call
+
+```python
 save_auth_tokens(cookies=<cookie_header>)
 ```
 
-That's it! No more manual CSRF token or session ID extraction.
+**Result:** ⏱️ First API call fetches NotebookLM page (~1-2s delay), subsequent calls are fast.
 
 ### Method 2: Environment Variables
 
@@ -63,14 +79,30 @@ That's it! No more manual CSRF token or session ID extraction.
 | `NOTEBOOKLM_CSRF_TOKEN` | No | (DEPRECATED - auto-extracted) |
 | `NOTEBOOKLM_SESSION_ID` | No | (DEPRECATED - auto-extracted) |
 
-### How Auto-Refresh Works
+### How Token Extraction Works
 
-When the client is initialized without a CSRF token:
-1. It fetches `notebooklm.google.com` using the stored cookies
-2. Extracts `SNlM0e` (CSRF) and `FdrFJe` (session ID) from the page HTML
-3. Uses these tokens for all subsequent API calls
+**Three ways to get CSRF token and session ID:**
 
-This happens automatically - users never need to think about ephemeral tokens.
+1. **From network request (⚡ fastest):**
+   - Extracted directly from `get_network_request()` data
+   - No page fetch required
+   - Saves to cache for reuse
+
+2. **From page fetch (⏱️ slower first time):**
+   - Client fetches `notebooklm.google.com` using cookies
+   - Extracts `SNlM0e` (CSRF) and `FdrFJe` (session ID) from HTML
+   - Saves to cache for reuse
+   - ~1-2 seconds one-time delay
+
+3. **From cache (⚡ instant):**
+   - Subsequent requests reuse cached tokens
+   - No fetching needed
+   - Cache updates automatically when tokens are refreshed
+
+**Performance:**
+- **First API call with Option A:** ~100-300ms ⚡
+- **First API call with Option B:** ~1.5-2s ⏱️
+- **All subsequent calls:** ~100-300ms ⚡ (cached tokens)
 
 ### Essential Cookies
 

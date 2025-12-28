@@ -78,6 +78,18 @@ OWNERSHIP_MINE = 1          # Created by me
 OWNERSHIP_SHARED = 2        # Shared with me by someone else
 
 
+@dataclass
+class ConversationTurn:
+    """Represents a single turn in a conversation (query + response).
+
+    Used to track conversation history for follow-up queries.
+    NotebookLM requires the full conversation history in follow-up requests.
+    """
+    query: str       # The user's question
+    answer: str      # The AI's response
+    turn_number: int  # 1-indexed turn number in the conversation
+
+
 def parse_timestamp(ts_array: list | None) -> str | None:
     """Convert [seconds, nanoseconds] timestamp array to ISO format string.
 
@@ -297,6 +309,14 @@ class ConsumerNotebookLMClient:
         self._client: httpx.Client | None = None
         self._session_id = session_id
 
+        # Conversation cache for follow-up queries
+        # Key: conversation_id, Value: list of ConversationTurn objects
+        self._conversation_cache: dict[str, list[ConversationTurn]] = {}
+
+        # Request counter for _reqid parameter (required for query endpoint)
+        import random
+        self._reqid_counter = random.randint(100000, 999999)
+
         # Auto-refresh tokens if not provided
         if not self.csrf_token:
             self._refresh_auth_tokens()
@@ -355,6 +375,39 @@ class ConsumerNotebookLMClient:
             if sid_match:
                 self._session_id = sid_match.group(1)
 
+            # Cache the extracted tokens to avoid re-fetching the page on next request
+            self._update_cached_tokens()
+
+    def _update_cached_tokens(self) -> None:
+        """Update the cached auth tokens with newly extracted CSRF token and session ID.
+
+        This avoids re-fetching the NotebookLM page on every client initialization,
+        significantly improving performance for subsequent API calls.
+        """
+        try:
+            import time
+            from .auth import AuthTokens, save_tokens_to_cache, load_cached_tokens
+
+            # Load existing cache or create new
+            cached = load_cached_tokens()
+            if cached:
+                # Update existing cache with new tokens
+                cached.csrf_token = self.csrf_token
+                cached.session_id = self._session_id
+            else:
+                # Create new cache entry
+                cached = AuthTokens(
+                    cookies=self.cookies,
+                    csrf_token=self.csrf_token,
+                    session_id=self._session_id,
+                    extracted_at=time.time(),
+                )
+
+            save_tokens_to_cache(cached, silent=True)
+        except Exception:
+            # Silently fail - caching is an optimization, not critical
+            pass
+
     def _get_client(self) -> httpx.Client:
         """Get or create HTTP client."""
         if self._client is None:
@@ -377,19 +430,21 @@ class ConsumerNotebookLMClient:
     def _build_request_body(self, rpc_id: str, params: Any) -> str:
         """Build the batchexecute request body."""
         # The params need to be JSON-encoded, then wrapped in the RPC structure
-        params_json = json.dumps(params)
+        # Use separators to match Chrome's compact format (no spaces)
+        params_json = json.dumps(params, separators=(',', ':'))
 
         # Build the f.req structure
         f_req = [[[rpc_id, params_json, None, "generic"]]]
-        f_req_json = json.dumps(f_req)
+        f_req_json = json.dumps(f_req, separators=(',', ':'))
 
-        # URL encode
-        body_parts = [f"f.req={urllib.parse.quote(f_req_json)}"]
+        # URL encode (safe='' encodes all characters including /)
+        body_parts = [f"f.req={urllib.parse.quote(f_req_json, safe='')}"]
 
         if self.csrf_token:
-            body_parts.append(f"at={urllib.parse.quote(self.csrf_token)}")
+            body_parts.append(f"at={urllib.parse.quote(self.csrf_token, safe='')}")
 
-        return "&".join(body_parts)
+        # Add trailing & to match NotebookLM's format
+        return "&".join(body_parts) + "&"
 
     def _build_url(self, rpc_id: str, source_path: str = "/") -> str:
         """Build the batchexecute URL with query params."""
@@ -469,6 +524,91 @@ class ConsumerNotebookLMClient:
                                     return result_str
                             return result_str
         return None
+
+    # =========================================================================
+    # Conversation Management (for query follow-ups)
+    # =========================================================================
+
+    def _build_conversation_history(self, conversation_id: str) -> list | None:
+        """Build the conversation history array for follow-up queries.
+
+        Chrome expects history in format: [[answer, null, 2], [query, null, 1], ...]
+        where type 1 = user message, type 2 = AI response.
+
+        The history includes ALL previous turns, not just the most recent one.
+        Turns are added in chronological order (oldest first).
+
+        Args:
+            conversation_id: The conversation ID to get history for
+
+        Returns:
+            List in Chrome's expected format, or None if no history exists
+        """
+        turns = self._conversation_cache.get(conversation_id, [])
+        if not turns:
+            return None
+
+        history = []
+        # Add turns in chronological order (oldest first)
+        # Each turn adds: [answer, null, 2] then [query, null, 1]
+        for turn in turns:
+            history.append([turn.answer, None, 2])
+            history.append([turn.query, None, 1])
+
+        return history if history else None
+
+    def _cache_conversation_turn(
+        self, conversation_id: str, query: str, answer: str
+    ) -> None:
+        """Cache a conversation turn for future follow-up queries.
+
+        Args:
+            conversation_id: The conversation ID
+            query: The user's question
+            answer: The AI's response
+        """
+        if conversation_id not in self._conversation_cache:
+            self._conversation_cache[conversation_id] = []
+
+        turn_number = len(self._conversation_cache[conversation_id]) + 1
+        turn = ConversationTurn(query=query, answer=answer, turn_number=turn_number)
+        self._conversation_cache[conversation_id].append(turn)
+
+    def clear_conversation(self, conversation_id: str) -> bool:
+        """Clear the conversation cache for a specific conversation.
+
+        Args:
+            conversation_id: The conversation ID to clear
+
+        Returns:
+            True if conversation was found and cleared, False if not found
+        """
+        if conversation_id in self._conversation_cache:
+            del self._conversation_cache[conversation_id]
+            return True
+        return False
+
+    def get_conversation_history(self, conversation_id: str) -> list[dict] | None:
+        """Get the conversation history for a specific conversation.
+
+        Args:
+            conversation_id: The conversation ID
+
+        Returns:
+            List of dicts with query/answer pairs, or None if not found
+        """
+        turns = self._conversation_cache.get(conversation_id)
+        if not turns:
+            return None
+
+        return [
+            {"turn": t.turn_number, "query": t.query, "answer": t.answer}
+            for t in turns
+        ]
+
+    # =========================================================================
+    # Notebook Operations
+    # =========================================================================
 
     def list_notebooks(self, debug: bool = False) -> list[ConsumerNotebook]:
         """List all notebooks."""
@@ -1036,7 +1176,7 @@ class ConsumerNotebookLMClient:
         # [[[null, null, [urls], null, null, null, null, null, null, null, 1]], notebook_id, [2], settings]
         source_data = [None, None, [url], None, None, None, None, None, None, None, 1]
         params = [
-            [[source_data]],
+            [source_data],
             notebook_id,
             [2],
             [1, None, None, None, None, None, None, None, None, None, [1]]
@@ -1078,7 +1218,7 @@ class ConsumerNotebookLMClient:
         # [[[null, [title, content], null, 2, null, null, null, null, null, null, 1]], notebook_id, [2], settings]
         source_data = [None, [title, text], None, 2, None, None, None, None, None, None, 1]
         params = [
-            [[source_data]],
+            [source_data],
             notebook_id,
             [2],
             [1, None, None, None, None, None, None, None, None, None, [1]]
@@ -1142,7 +1282,7 @@ class ConsumerNotebookLMClient:
             1
         ]
         params = [
-            [[source_data]],
+            [source_data],
             notebook_id,
             [2],
             [1, None, None, None, None, None, None, None, None, None, [1]]
@@ -1175,14 +1315,24 @@ class ConsumerNotebookLMClient:
     ) -> dict | None:
         """Query the notebook with a question.
 
+        Supports both new conversations and follow-up queries. For follow-ups,
+        the conversation history is automatically included from the cache.
+
         Args:
             notebook_id: The notebook UUID
             query_text: The question to ask
             source_ids: Optional list of source IDs to query (default: all sources)
-            conversation_id: Optional conversation ID for follow-up questions
+            conversation_id: Optional conversation ID for follow-up questions.
+                           If None, starts a new conversation.
+                           If provided and exists in cache, includes conversation history.
 
         Returns:
-            Dict with answer text, citations, and conversation_id for follow-ups
+            Dict with:
+            - answer: The AI's response text
+            - conversation_id: ID to use for follow-up questions
+            - turn_number: Which turn this is in the conversation (1 = first)
+            - is_follow_up: Whether this was a follow-up query
+            - raw_response: The raw parsed response (for debugging)
         """
         import uuid
 
@@ -1191,44 +1341,51 @@ class ConsumerNotebookLMClient:
         # If no source_ids provided, get them from the notebook
         if source_ids is None:
             notebook_data = self.get_notebook(notebook_id)
-            if notebook_data and isinstance(notebook_data, list) and len(notebook_data) > 0:
-                # Extract source IDs from notebook data
-                # Structure varies, try to find source IDs
-                source_ids = []
-                # This needs refinement based on actual notebook structure
-            else:
-                source_ids = []
+            source_ids = self._extract_source_ids_from_notebook(notebook_data)
 
-        # Generate conversation ID if not provided
-        if conversation_id is None:
+        # Determine if this is a new conversation or follow-up
+        is_new_conversation = conversation_id is None
+        if is_new_conversation:
             conversation_id = str(uuid.uuid4())
+            conversation_history = None
+        else:
+            # Check if we have cached history for this conversation
+            conversation_history = self._build_conversation_history(conversation_id)
 
-        # Build source IDs structure: [[["id1"]], [["id2"]], ...]
-        sources_array = [[[[sid]]] for sid in source_ids] if source_ids else []
+        # Build source IDs structure: [[[sid]]] for each source (3 brackets, not 4!)
+        sources_array = [[[sid]] for sid in source_ids] if source_ids else []
 
         # Query params structure (from network capture)
+        # For new conversations: params[2] = None
+        # For follow-ups: params[2] = [[answer, null, 2], [query, null, 1], ...]
         params = [
             sources_array,
             query_text,
-            None,
+            conversation_history,  # None for new, history array for follow-ups
             [2, None, [1]],
-            conversation_id
+            conversation_id,
         ]
-        params_json = json.dumps(params)
+
+        # Use compact JSON format matching Chrome (no spaces)
+        params_json = json.dumps(params, separators=(",", ":"))
 
         # Build request body (similar to batchexecute but different structure)
         f_req = [None, params_json]
-        f_req_json = json.dumps(f_req)
+        f_req_json = json.dumps(f_req, separators=(",", ":"))
 
-        body_parts = [f"f.req={urllib.parse.quote(f_req_json)}"]
+        # URL encode with safe='' to encode all characters including /
+        body_parts = [f"f.req={urllib.parse.quote(f_req_json, safe='')}"]
         if self.csrf_token:
-            body_parts.append(f"at={urllib.parse.quote(self.csrf_token)}")
-        body = "&".join(body_parts)
+            body_parts.append(f"at={urllib.parse.quote(self.csrf_token, safe='')}")
+        # Add trailing & to match NotebookLM's format
+        body = "&".join(body_parts) + "&"
 
-        # Build URL
+        # Build URL with _reqid (required for query endpoint)
+        self._reqid_counter += 100000  # Increment counter
         url_params = {
             "bl": "boq_labs-tailwind-frontend_20251221.14_p0",
             "hl": "en",
+            "_reqid": str(self._reqid_counter),
             "rt": "c",
         }
         if self._session_id:
@@ -1240,33 +1397,183 @@ class ConsumerNotebookLMClient:
         response = client.post(url, content=body)
         response.raise_for_status()
 
-        # Parse streaming response - collect all chunks
-        parsed = self._parse_response(response.text)
+        # Parse streaming response
+        answer_text = self._parse_query_response(response.text)
 
-        # Extract final answer from the last chunk
-        answer_text = ""
-        for chunk in reversed(parsed):
-            if isinstance(chunk, list):
-                for item in chunk:
-                    if isinstance(item, list) and len(item) >= 3:
-                        if item[0] == "wrb.fr" and item[2]:
-                            try:
-                                result = json.loads(item[2])
-                                if result and isinstance(result, list) and len(result) > 0:
-                                    inner = result[0]
-                                    if isinstance(inner, list) and len(inner) > 0:
-                                        answer_text = inner[0]
-                                        break
-                            except json.JSONDecodeError:
-                                pass
-                if answer_text:
-                    break
+        # Cache this turn for future follow-ups (only if we got an answer)
+        if answer_text:
+            self._cache_conversation_turn(conversation_id, query_text, answer_text)
+
+        # Calculate turn number
+        turns = self._conversation_cache.get(conversation_id, [])
+        turn_number = len(turns)
 
         return {
             "answer": answer_text,
             "conversation_id": conversation_id,
-            "raw_response": parsed,
+            "turn_number": turn_number,
+            "is_follow_up": not is_new_conversation,
+            "raw_response": response.text[:1000] if response.text else "",  # Truncate for debugging
         }
+
+    def _extract_source_ids_from_notebook(self, notebook_data: Any) -> list[str]:
+        """Extract source IDs from notebook data.
+
+        Args:
+            notebook_data: Raw notebook data from get_notebook()
+
+        Returns:
+            List of source ID strings
+        """
+        source_ids = []
+        if not notebook_data or not isinstance(notebook_data, list):
+            return source_ids
+
+        try:
+            # Notebook structure: [[notebook_title, sources_array, notebook_id, ...]]
+            # The outer array contains one element with all notebook info
+            # Sources are at position [0][1]
+            if len(notebook_data) > 0 and isinstance(notebook_data[0], list):
+                notebook_info = notebook_data[0]
+                if len(notebook_info) > 1 and isinstance(notebook_info[1], list):
+                    sources = notebook_info[1]
+                    for source in sources:
+                        # Each source: [[source_id], title, metadata, [null, 2]]
+                        if isinstance(source, list) and len(source) > 0:
+                            source_id_wrapper = source[0]
+                            if isinstance(source_id_wrapper, list) and len(source_id_wrapper) > 0:
+                                source_id = source_id_wrapper[0]
+                                if isinstance(source_id, str):
+                                    source_ids.append(source_id)
+        except (IndexError, TypeError):
+            pass
+
+        return source_ids
+
+    def _parse_query_response(self, response_text: str) -> str:
+        """Parse the streaming query response and extract the final answer.
+
+        The query endpoint returns a streaming response with multiple chunks.
+        Each chunk has a type indicator: 1 = actual answer, 2 = thinking step.
+
+        Response format:
+        )]}'
+        <byte_count>
+        [[["wrb.fr", null, "<json_with_text>", ...]]]
+        ...more chunks...
+
+        Strategy: Find the LONGEST chunk that is marked as type 1 (actual answer).
+        If no type 1 chunks found, fall back to longest overall.
+
+        Args:
+            response_text: Raw response text from the query endpoint
+
+        Returns:
+            The extracted answer text, or empty string if parsing fails
+        """
+        # Remove anti-XSSI prefix
+        if response_text.startswith(")]}'"):
+            response_text = response_text[4:]
+
+        lines = response_text.strip().split("\n")
+        longest_answer = ""
+        longest_thinking = ""
+
+        # Parse chunks - prioritize type 1 (answers) over type 2 (thinking)
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if not line:
+                i += 1
+                continue
+
+            # Try to parse as byte count (indicates next line is JSON)
+            try:
+                int(line)
+                i += 1
+                if i < len(lines):
+                    json_line = lines[i]
+                    text, is_answer = self._extract_answer_from_chunk(json_line)
+                    if text:
+                        if is_answer and len(text) > len(longest_answer):
+                            longest_answer = text
+                        elif not is_answer and len(text) > len(longest_thinking):
+                            longest_thinking = text
+                i += 1
+            except ValueError:
+                # Not a byte count, try to parse as JSON directly
+                text, is_answer = self._extract_answer_from_chunk(line)
+                if text:
+                    if is_answer and len(text) > len(longest_answer):
+                        longest_answer = text
+                    elif not is_answer and len(text) > len(longest_thinking):
+                        longest_thinking = text
+                i += 1
+
+        # Return answer if found, otherwise fall back to thinking
+        return longest_answer if longest_answer else longest_thinking
+
+    def _extract_answer_from_chunk(self, json_str: str) -> tuple[str | None, bool]:
+        """Extract answer text from a single JSON chunk.
+
+        The chunk structure is:
+        [["wrb.fr", null, "<nested_json>", ...]]
+
+        The nested_json contains: [["answer_text", null, [...], null, [type_info]]]
+        where type_info is an array ending with:
+        - 1 = actual answer
+        - 2 = thinking step
+
+        Args:
+            json_str: A single JSON chunk from the response
+
+        Returns:
+            Tuple of (text, is_answer) where is_answer is True for actual answers (type 1)
+        """
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            return None, False
+
+        if not isinstance(data, list) or len(data) == 0:
+            return None, False
+
+        # Structure: [["wrb.fr", null, "<inner_json>", ...], ...]
+        for item in data:
+            if not isinstance(item, list) or len(item) < 3:
+                continue
+            if item[0] != "wrb.fr":
+                continue
+
+            inner_json_str = item[2]
+            if not isinstance(inner_json_str, str):
+                continue
+
+            try:
+                inner_data = json.loads(inner_json_str)
+            except json.JSONDecodeError:
+                continue
+
+            # Structure: [["answer_text", null, [...], null, type_info]]
+            # Type indicator is at inner_data[0][4][-1]: 1 = answer, 2 = thinking
+            if isinstance(inner_data, list) and len(inner_data) > 0:
+                first_elem = inner_data[0]
+                if isinstance(first_elem, list) and len(first_elem) > 0:
+                    answer_text = first_elem[0]
+                    if isinstance(answer_text, str) and len(answer_text) > 20:
+                        # Check type indicator at first_elem[4][-1]
+                        is_answer = False
+                        if len(first_elem) > 4 and isinstance(first_elem[4], list):
+                            type_info = first_elem[4]
+                            # The type is nested: [[...], None, None, None, type_code]
+                            # where type_code is 1 (answer) or 2 (thinking)
+                            if len(type_info) > 0 and isinstance(type_info[-1], int):
+                                is_answer = type_info[-1] == 1
+                        return answer_text, is_answer
+                elif isinstance(first_elem, str) and len(first_elem) > 20:
+                    return first_elem, False
+
+        return None, False
 
     def start_research(
         self,
