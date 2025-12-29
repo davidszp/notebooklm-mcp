@@ -83,19 +83,19 @@ def launch_chrome(port: int, headless: bool = False) -> bool:
         print(f"Unsupported platform: {system}")
         return False
 
+    # Chrome 136+ requires a non-default user-data-dir for remote debugging
+    # We use a temp directory and have the user log in via the browser window
+    import tempfile
+    temp_profile_dir = tempfile.mkdtemp(prefix="notebooklm-chrome-")
+
     args = [
         chrome_path,
         f"--remote-debugging-port={port}",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-extensions",  # Bypass extensions that may interfere (e.g., Antigravity IDE)
-        "--disable-features=DevToolsDebuggingRestrictions",  # Required for Chrome 136+ to allow debugging with default profile
+        f"--user-data-dir={temp_profile_dir}",  # Must be non-default for Chrome 136+
     ]
-
-    # Use the user's default Chrome profile to access existing cookies
-    user_data_dir = get_chrome_user_data_dir()
-    if user_data_dir:
-        args.append(f"--user-data-dir={user_data_dir}")
 
     if headless:
         args.append("--headless=new")
@@ -354,8 +354,10 @@ def run_auth_flow(port: int = CDP_DEFAULT_PORT, auto_launch: bool = True) -> Aut
             print()
             return None
 
-        print("Launching Chrome to check login status...")
-        # Launch with visible window so user can log in if needed
+        print("Launching Chrome with a fresh profile...")
+        print("(You will need to log in to your Google account)")
+        print()
+        # Launch with visible window so user can log in
         launch_chrome(port, headless=False)
         time.sleep(3)
         debugger_url = get_chrome_debugger_url(port)
@@ -363,20 +365,13 @@ def run_auth_flow(port: int = CDP_DEFAULT_PORT, auto_launch: bool = True) -> Aut
     if not debugger_url:
         print(f"ERROR: Cannot connect to Chrome on port {port}")
         print()
-        print("TIP: The easiest option is file mode:")
+        print("This can happen if:")
+        print("  - Chrome failed to start")
+        print("  - Another process is using port 9222")
+        print("  - Firewall is blocking the port")
+        print()
+        print("TRY: Use file mode instead (most reliable):")
         print("     notebooklm-consumer-auth --file")
-        print()
-        print("Or manually start Chrome with debugging (close Chrome first!):")
-        print()
-        user_data_dir = get_chrome_user_data_dir() or "~/Library/Application Support/Google/Chrome"
-        print("  macOS:")
-        print(f'    /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome \\')
-        print(f'      --remote-debugging-port={port} \\')
-        print(f'      --disable-extensions \\')
-        print(f'      --disable-features=DevToolsDebuggingRestrictions \\')
-        print(f'      --user-data-dir="{user_data_dir}"')
-        print()
-        print("  Then run: notebooklm-consumer-auth")
         print()
         return None
 
