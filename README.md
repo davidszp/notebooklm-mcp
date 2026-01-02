@@ -200,13 +200,19 @@ For tools that use JSON configuration files:
 | VS Code | `~/.vscode/mcp.json` |
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
 
-Add this configuration:
+**Step 1:** Find your installed path:
+```bash
+which notebooklm-mcp
+```
+
+This typically returns `/Users/<YOUR_USERNAME>/.local/bin/notebooklm-mcp` on macOS.
+
+**Step 2:** Add this configuration (replace the path with your result from Step 1):
 ```json
 {
   "mcpServers": {
     "notebooklm-mcp": {
-      "command": "uvx",
-      "args": ["--from", "notebooklm-mcp-server", "notebooklm-mcp"]
+      "command": "/Users/<YOUR_USERNAME>/.local/bin/notebooklm-mcp"
     }
   }
 }
@@ -221,7 +227,7 @@ Restart the application after adding the configuration.
 <your-tool> mcp add notebooklm-mcp notebooklm-mcp
 ```
 
-**Tools using JSON config files** — use the uvx config shown above.
+**Tools using JSON config files** — use the full path approach shown above.
 
 ### Gemini CLI (Recommended CLI Method)
 
@@ -247,11 +253,10 @@ gemini mcp list
 <details>
 <summary>Alternative: Manual JSON Configuration</summary>
 
-Add to `~/.gemini/settings.json` under `mcpServers`:
+Add to `~/.gemini/settings.json` under `mcpServers` (run `which notebooklm-mcp` to find your path):
 ```json
 "notebooklm-mcp": {
-  "command": "uvx",
-  "args": ["--from", "notebooklm-mcp-server", "notebooklm-mcp"]
+  "command": "/Users/<YOUR_USERNAME>/.local/bin/notebooklm-mcp"
 }
 ```
 
